@@ -1,7 +1,7 @@
 +++
 title = "Testing"
 description = "Testing handler and middleware in Echo"
-[menu.side]
+[menu.main]
   name = "Testing"
   parent = "guide"
   weight = 9
@@ -98,7 +98,7 @@ func TestCreateUser(t *testing.T) {
 	if assert.NoError(t, err) {
 		req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 		rec := httptest.NewRecorder()
-		c := e.NewContext(standard.NewRequest(req, e.Logger()), standard.NewResponse(rec, e.Logger()))
+		c := e.NewContext(req, rec)
 		h := &handler{mockDB}
 
 		// Assertions
@@ -114,7 +114,7 @@ func TestGetUser(t *testing.T) {
 	e := echo.New()
 	req := new(http.Request)
 	rec := httptest.NewRecorder()
-	c := e.NewContext(standard.NewRequest(req, e.Logger()), standard.NewResponse(rec, e.Logger()))
+  c := e.NewContext(req, rec)
 	c.SetPath("/users/:email")
 	c.SetParamNames("email")
 	c.SetParamValues("jon@labstack.com")
@@ -156,4 +156,4 @@ req, err := http.NewRequest(echo.POST, "/?"+q.Encode(), nil)
 
 *TBD*
 
-You can looking to built-in middleware [test cases](https://github.com/labstack/echo/tree/master/middleware).
+For now you can look into built-in middleware [test cases](https://github.com/labstack/echo/tree/master/middleware).

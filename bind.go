@@ -14,16 +14,24 @@ import (
 type (
 	// Binder is the interface that wraps the Bind method.
 	Binder interface {
-		Bind(interface{}, Context) error
+		Bind(i interface{}, c Context) error
 	}
 
-	binder struct{}
+	// DefaultBinder is the default implementation of the Binder interface.
+	DefaultBinder struct{}
+
+	// BindUnmarshaler is the interface used to wrap the UnmarshalParam method.
+	BindUnmarshaler interface {
+		// UnmarshalParam decodes and assigns a value from an form or query param.
+		UnmarshalParam(src string) error
+	}
 )
 
-func (b *binder) Bind(i interface{}, c Context) (err error) {
+// Bind implements the `Binder#Bind` function.
+func (b *DefaultBinder) Bind(i interface{}, c Context) (err error) {
 	req := c.Request()
 	if req.Method == GET {
-		if err = b.bindData(i, c.QueryParams()); err != nil {
+		if err = b.bindData(i, c.QueryParams(), "query"); err != nil {
 			return NewHTTPError(http.StatusBadRequest, err.Error())
 		}
 		return
@@ -58,7 +66,7 @@ func (b *binder) Bind(i interface{}, c Context) (err error) {
 		if err != nil {
 			return NewHTTPError(http.StatusBadRequest, err.Error())
 		}
-		if err = b.bindData(i, params); err != nil {
+		if err = b.bindData(i, params, "form"); err != nil {
 			return NewHTTPError(http.StatusBadRequest, err.Error())
 		}
 	default:
@@ -67,7 +75,7 @@ func (b *binder) Bind(i interface{}, c Context) (err error) {
 	return
 }
 
-func (b *binder) bindData(ptr interface{}, data map[string][]string) error {
+func (b *DefaultBinder) bindData(ptr interface{}, data map[string][]string, tag string) error {
 	typ := reflect.TypeOf(ptr).Elem()
 	val := reflect.ValueOf(ptr).Elem()
 
@@ -82,13 +90,13 @@ func (b *binder) bindData(ptr interface{}, data map[string][]string) error {
 			continue
 		}
 		structFieldKind := structField.Kind()
-		inputFieldName := typeField.Tag.Get("form")
+		inputFieldName := typeField.Tag.Get(tag)
 
 		if inputFieldName == "" {
 			inputFieldName = typeField.Name
-			// If "form" tag is nil, we inspect if the field is a struct.
+			// If tag is nil, we inspect if the field is a struct.
 			if structFieldKind == reflect.Struct {
-				err := b.bindData(structField.Addr().Interface(), data)
+				err := b.bindData(structField.Addr().Interface(), data, tag)
 				if err != nil {
 					return err
 				}
@@ -149,10 +157,33 @@ func setWithProperType(valueKind reflect.Kind, val string, structField reflect.V
 		return setFloatField(val, 64, structField)
 	case reflect.String:
 		structField.SetString(val)
+	case reflect.Ptr:
+		return unmarshalFieldPtr(val, structField)
 	default:
-		return errors.New("unknown type")
+		return unmarshalField(val, structField)
 	}
 	return nil
+}
+
+func unmarshalField(value string, field reflect.Value) error {
+	ptr := reflect.New(field.Type())
+	if ptr.CanInterface() {
+		iface := ptr.Interface()
+		if unmarshaler, ok := iface.(BindUnmarshaler); ok {
+			err := unmarshaler.UnmarshalParam(value)
+			field.Set(ptr.Elem())
+			return err
+		}
+	}
+	return errors.New("unknown type")
+}
+
+func unmarshalFieldPtr(value string, field reflect.Value) error {
+	if field.IsNil() {
+		// Initialize the pointer to a nil value
+		field.Set(reflect.New(field.Type().Elem()))
+	}
+	return unmarshalField(value, field.Elem())
 }
 
 func setIntField(value string, bitSize int, field reflect.Value) error {

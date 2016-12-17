@@ -1,5 +1,5 @@
 /*
-Package echo implements a fast and unfancy HTTP server framework for Go (Golang).
+Package echo implements high performance, minimalist Go web framework.
 
 Example:
 
@@ -51,31 +51,35 @@ import (
 	"time"
 
 	"github.com/labstack/gommon/color"
-	glog "github.com/labstack/gommon/log"
-	"github.com/rsc/letsencrypt"
+	"github.com/labstack/gommon/log"
 	"github.com/tylerb/graceful"
+	"golang.org/x/crypto/acme/autocert"
 )
 
 type (
 	// Echo is the top-level framework instance.
 	Echo struct {
-		DisableHTTP2 bool
-		Debug        bool
-		HTTPErrorHandler
-		Binder          Binder
-		Renderer        Renderer
-		ShutdownTimeout time.Duration
-		Color           *color.Color
-		Logger          Logger
-		server          *graceful.Server
-		tlsServer       *graceful.Server
-		tlsManager      letsencrypt.Manager
-		premiddleware   []MiddlewareFunc
-		middleware      []MiddlewareFunc
-		maxParam        *int
-		router          *Router
-		notFoundHandler HandlerFunc
-		pool            sync.Pool
+		DisableHTTP2     bool
+		Debug            bool
+		HTTPErrorHandler HTTPErrorHandler
+		Binder           Binder
+		Validator        Validator
+		Renderer         Renderer
+		AutoTLSManager   autocert.Manager
+		ReadTimeout      time.Duration
+		WriteTimeout     time.Duration
+		ShutdownTimeout  time.Duration
+		Color            *color.Color
+		Logger           Logger
+		stdLogger        *slog.Logger
+		server           *graceful.Server
+		tlsServer        *graceful.Server
+		premiddleware    []MiddlewareFunc
+		middleware       []MiddlewareFunc
+		maxParam         *int
+		router           *Router
+		notFoundHandler  HandlerFunc
+		pool             sync.Pool
 	}
 
 	// Route contains a handler and information for matching against requests.
@@ -88,7 +92,7 @@ type (
 	// HTTPError represents an error that occurred while handling a request.
 	HTTPError struct {
 		Code    int
-		Message string
+		Message interface{}
 	}
 
 	// MiddlewareFunc defines a function to process middleware.
@@ -102,7 +106,7 @@ type (
 
 	// Validator is the interface that wraps the Validate function.
 	Validator interface {
-		Validate() error
+		Validate(i interface{}) error
 	}
 
 	// Renderer is the interface that wraps the Render function.
@@ -217,6 +221,7 @@ var (
 	ErrUnauthorized                = NewHTTPError(http.StatusUnauthorized)
 	ErrMethodNotAllowed            = NewHTTPError(http.StatusMethodNotAllowed)
 	ErrStatusRequestEntityTooLarge = NewHTTPError(http.StatusRequestEntityTooLarge)
+	ErrValidatorNotRegistered      = errors.New("validator not registered")
 	ErrRendererNotRegistered       = errors.New("renderer not registered")
 	ErrInvalidRedirectCode         = errors.New("invalid redirect status code")
 	ErrCookieNotFound              = errors.New("cookie not found")
@@ -236,14 +241,18 @@ var (
 // New creates an instance of Echo.
 func New() (e *Echo) {
 	e = &Echo{
+		AutoTLSManager: autocert.Manager{
+			Prompt: autocert.AcceptTOS,
+		},
 		ShutdownTimeout: 15 * time.Second,
-		Logger:          glog.New("echo"),
+		Logger:          log.New("echo"),
 		maxParam:        new(int),
 		Color:           color.New(),
 	}
 	e.HTTPErrorHandler = e.DefaultHTTPErrorHandler
-	e.Binder = &binder{}
-	e.Logger.SetLevel(glog.OFF)
+	e.Binder = &DefaultBinder{}
+	e.Logger.SetLevel(log.OFF)
+	e.stdLogger = slog.New(e.Logger.Output(), e.Logger.Prefix()+": ", 0)
 	e.pool.New = func() interface{} {
 		return e.NewContext(nil, nil)
 	}
@@ -268,24 +277,36 @@ func (e *Echo) Router() *Router {
 	return e.router
 }
 
-// DefaultHTTPErrorHandler invokes the default HTTP error handler.
+// DefaultHTTPErrorHandler is the default HTTP error handler. It sends a JSON response
+// with status code.
 func (e *Echo) DefaultHTTPErrorHandler(err error, c Context) {
-	code := http.StatusInternalServerError
-	msg := http.StatusText(code)
+	var (
+		code = http.StatusInternalServerError
+		msg  interface{}
+	)
+
 	if he, ok := err.(*HTTPError); ok {
 		code = he.Code
 		msg = he.Message
-	}
-	if e.Debug {
+	} else {
 		msg = err.Error()
 	}
+	if reflect.TypeOf(msg).Kind() != reflect.Ptr {
+		msg = Map{"message": msg}
+	}
+
 	if !c.Response().Committed {
 		if c.Request().Method == HEAD { // Issue #608
-			c.NoContent(code)
+			if err := c.NoContent(code); err != nil {
+				goto ERROR
+			}
 		} else {
-			c.String(code, msg)
+			if err := c.JSON(code, msg); err != nil {
+				goto ERROR
+			}
 		}
 	}
+ERROR:
 	e.Logger.Error(err)
 }
 
@@ -459,7 +480,7 @@ func (e *Echo) Routes() []Route {
 }
 
 // AcquireContext returns an empty `Context` instance from the pool.
-// You must be return the context by calling `ReleaseContext()`.
+// You must return the context by calling `ReleaseContext()`.
 func (e *Echo) AcquireContext() Context {
 	return e.pool.Get().(Context)
 }
@@ -478,7 +499,7 @@ func (e *Echo) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Middleware
 	h := func(c Context) error {
 		method := r.Method
-		path := r.URL.Path
+		path := r.URL.EscapedPath()
 		e.router.Find(method, path, c)
 		h := c.Handler()
 		for i := len(e.middleware) - 1; i >= 0; i-- {
@@ -502,7 +523,12 @@ func (e *Echo) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // Start starts the HTTP server.
 func (e *Echo) Start(address string) error {
-	return e.StartServer(&http.Server{Addr: address})
+	return e.StartServer(&http.Server{
+		Addr:         address,
+		ReadTimeout:  e.ReadTimeout,
+		WriteTimeout: e.WriteTimeout,
+		ErrorLog:     e.stdLogger,
+	})
 }
 
 // StartTLS starts the HTTPS server.
@@ -520,13 +546,9 @@ func (e *Echo) StartTLS(address string, certFile, keyFile string) (err error) {
 }
 
 // StartAutoTLS starts the HTTPS server using certificates automatically from https://letsencrypt.org.
-func (e *Echo) StartAutoTLS(address string, hosts []string, cacheFile string) (err error) {
+func (e *Echo) StartAutoTLS(address string) error {
 	config := new(tls.Config)
-	config.GetCertificate = e.tlsManager.GetCertificate
-	e.tlsManager.SetHosts(hosts) // Added security
-	if err = e.tlsManager.CacheFile(cacheFile); err != nil {
-		return
-	}
+	config.GetCertificate = e.AutoTLSManager.GetCertificate
 	return e.startTLS(address, config)
 }
 
@@ -535,8 +557,11 @@ func (e *Echo) startTLS(address string, config *tls.Config) error {
 		config.NextProtos = append(config.NextProtos, "h2")
 	}
 	return e.StartServer(&http.Server{
-		Addr:      address,
-		TLSConfig: config,
+		Addr:         address,
+		ReadTimeout:  e.ReadTimeout,
+		WriteTimeout: e.WriteTimeout,
+		TLSConfig:    config,
+		ErrorLog:     e.stdLogger,
 	})
 }
 
@@ -546,7 +571,7 @@ func (e *Echo) StartServer(s *http.Server) error {
 	gs := &graceful.Server{
 		Server:  s,
 		Timeout: e.ShutdownTimeout,
-		Logger:  slog.New(e.Logger.Output(), e.Logger.Prefix()+": ", 0),
+		Logger:  e.stdLogger,
 	}
 	if s.TLSConfig == nil {
 		e.server = gs
@@ -569,17 +594,17 @@ func (e *Echo) ShutdownTLS(timeout time.Duration) {
 }
 
 // NewHTTPError creates a new HTTPError instance.
-func NewHTTPError(code int, msg ...interface{}) *HTTPError {
+func NewHTTPError(code int, message ...interface{}) *HTTPError {
 	he := &HTTPError{Code: code, Message: http.StatusText(code)}
-	if len(msg) > 0 {
-		he.Message = fmt.Sprint(msg...)
+	if len(message) > 0 {
+		he.Message = message[0]
 	}
 	return he
 }
 
 // Error makes it compatible with `error` interface.
-func (e *HTTPError) Error() string {
-	return e.Message
+func (he *HTTPError) Error() string {
+	return fmt.Sprintf("code=%d, message=%s", he.Code, he.Message)
 }
 
 // WrapHandler wraps `http.Handler` into `echo.HandlerFunc`.
