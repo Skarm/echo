@@ -15,7 +15,6 @@
 - Highly customizable
 - Automatic TLS via Let’s Encrypt
 - HTTP/2 support
-- Built-in graceful shutdown
 
 ## Performance
 
@@ -39,7 +38,7 @@
 - PR should have:
   - Test case
   - Documentation
-  - Recipe (If it makes sense)
+  - Example (If it makes sense)
 - You can also contribute by:
   - Reporting issues
   - Suggesting new features or enhancements

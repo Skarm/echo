@@ -4,7 +4,6 @@ description = "Body limit middleware for Echo"
 [menu.main]
   name = "Body Limit"
   parent = "middleware"
-  weight = 5
 +++
 
 Body limit middleware sets the maximum allowed size for a request body, if the
@@ -28,8 +27,7 @@ e.Use(middleware.BodyLimit("2M"))
 
 ```go
 e := echo.New()
-e.Use(middleware.BodyLimitWithConfig(middleware.BodyLimitConfig{},
-}))
+e.Use(middleware.BodyLimitWithConfig(middleware.BodyLimitConfig{}))
 ```
 
 ## Configuration
@@ -49,6 +47,6 @@ BodyLimitConfig struct {
 
 ```go
 DefaultBodyLimitConfig = BodyLimitConfig{
-  Skipper: defaultSkipper,
+  Skipper: DefaultSkipper,
 }
 ```

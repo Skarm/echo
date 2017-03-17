@@ -4,7 +4,6 @@ description = "Customizing Echo"
 [menu.main]
   name = "Customization"
   parent = "guide"
-  weight = 3
 +++
 
 ## Debug
@@ -19,7 +18,7 @@ to `DEBUG`.
 `Echo#Logger.SetOutput(io.Writer)` can be used to set the output destination for
 the logger. Default value is `os.Stdout`
 
-To completely disabl logs use `Echo#Logger.SetOutput(io.Discard)` or `Echo#Logger.SetLevel(log.OFF)`
+To completely disable logs use `Echo#Logger.SetOutput(ioutil.Discard)` or `Echo#Logger.SetLevel(log.OFF)`
 
 ### Log Level
 
@@ -39,7 +38,7 @@ a custom logger using `Echo#Logger`.
 
 ## Custom Server
 
-`Echo#StartServer()` can be used to run a custom `http.Server`. 
+`Echo#StartServer()` can be used to run a custom server.
 
 *Example*
 
@@ -52,25 +51,34 @@ s := &http.Server{
 e.Logger.Fatal(e.StartServer(s))
 ```
 
+## Custom Listener
+
+`Echo#*Listener` can be used to run a custom listener.
+
+*Example*
+
+```go
+l, err := net.Listen("tcp", ":1323")
+if err != nil {
+  e.Logger.Fatal(l)
+}
+e.Listener = l
+e.Logger.Fatal(e.Start(""))
+```
+
 ## Disable HTTP/2
 
 `Echo#DisableHTTP2` can be used disable HTTP/2 protocol.
 
 ## Read Timeout
 
-`Echo#ReadTimeout` can be used to set the maximum duration before timing out read
+`Echo#*Server#ReadTimeout` can be used to set the maximum duration before timing out read
 of the request.
 
 ## Write Timeout
 
-`Echo#WriteTimeout` can be used to set the maximum duration before timing out write
+`Echo#*Server#WriteTimeout` can be used to set the maximum duration before timing out write
 of the response.
-
-## Shutdown Timeout
-
-`Echo#ShutdownTimeout` can be used to set the maximum duration to wait until killing
-active requests and stopping the server. If timeout is 0, the server never times
-out. It waits for all active requests to finish.
 
 ## Validator
 

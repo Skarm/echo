@@ -4,7 +4,6 @@ description = "Installing Echo"
 [menu.main]
   name = "Installation"
   parent = "guide"
-  weight = 1
 +++
 
 ## Prerequisites
@@ -16,7 +15,7 @@ description = "Installing Echo"
 
 ```sh
 $ cd <project in $GOPATH>
-$ go get -u github.com/labstack/echo
+$ go get -u github.com/labstack/echo/...
 ```
 
 ## Using [glide](http://glide.sh)

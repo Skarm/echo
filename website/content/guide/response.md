@@ -4,7 +4,6 @@ description = "Sending HTTP response in Echo"
 [menu.main]
   name = "Response"
   parent = "guide"
-  weight = 6
 +++
 
 ## Send String
@@ -129,7 +128,7 @@ func(c echo.Context) error {
 Go type into JSON and send it as JSONP payload constructed using a callback, with
 status code.
 
-[*Example*](/recipes/jsonp)
+[*Example*](/cookbook/jsonp)
 
 ## Send XML
 
